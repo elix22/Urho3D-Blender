@@ -236,6 +236,9 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
         # Use Fcurves only for actions
         if not ('ACTION' in self.animationSource):
             self.actionsByFcurves = False
+        # Morphs require 'Apply modifiers' (not sure)
+        if self.morphs:
+            self.modifiers = True
         # Morphs need geometries    
         if not self.geometries:
             self.morphs = False
@@ -405,12 +408,13 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
         self.textures = False
 
         self.prefabs = True
-        self.individualPrefab = False
+        self.objectsPrefab = False
         self.collectivePrefab = False
-        self.scenePrefab = False
+        self.fullScene = False
+        self.selectedObjects = False
         self.trasfObjects = False
-        self.physics = 'INDIVIDUAL'
-        self.shape = 'TRIANGLEMESH'
+        self.physics = False
+        self.collisionShape = 'TRIANGLEMESH'
 
     # Revert the output paths back to their default values
     def reset_paths(self, context, forced):
@@ -540,7 +544,8 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
     modifiers = BoolProperty(
             name = "Apply modifiers",
             description = "Apply the object modifiers before exporting",
-            default = False)
+            default = False,
+            update = update_func)
 
     modifiersRes = EnumProperty(
             name = "Modifiers setting",
@@ -771,8 +776,9 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
 
     morphs = BoolProperty(
             name = "Morphs (shape keys)",
-            description = "Export vertex morphs (Geometries needed)",
-            default = False)
+            description = "Export vertex morphs (Geometries and Apply modifiers needed)",
+            default = False,
+            update = update_func)
 
     morphNor = BoolProperty(
             name = "Normal",
@@ -809,44 +815,48 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
             default = False,
             update = update_func)
 
-    individualPrefab = BoolProperty(
-            name = "Individual Prefabs",
-            description = "Create one prefab per exported object (so if \"Merge objects\" option is checked, export one prefab for the merged object only)",
+    # --- Nodes/Prefabs ---
+
+    objectsPrefab = BoolProperty(
+            name = "Objects prefabs",
+            description = "Create a prefab/node for each object in the current scene",
             default = False,
             update = update_func)
 
     collectivePrefab = BoolProperty(
-            name = "One Collective",
-            description = "Create one unic/global prefab containing every exported objects. An empty root node holds the objects.",
+            name = "Collective prefab",
+            description = "Create one prefab/node for the whole scene",
             default = False,
             update = update_func)
 
-    scenePrefab = BoolProperty(
-            name = "Scene Prefab",
-            description = "Same content as 'Collective', but outputs a Urho3D xml scene (with Octree, PhysicsWorld and DebugRenderer)",
+    fullScene = BoolProperty(
+            name = "Full scene",
+            description = "Create a Urho3D scene",
+            default = False,
+            update = update_func)
+
+    selectedObjects = BoolProperty(
+            name = "Only selected objects",
+            description = "Create a prefab/node for selected object only",
             default = False,
             update = update_func)
 
     trasfObjects = BoolProperty(
-            name = "Transform objects",
-            description = "Save objects position/rotation/scale, works only with 'Front View = Back'",
+            name = "Position, Rotation, Scale",
+            description = "Add Position, Rotation, Scale to the nodes",
             default = False)
 
-    physics = EnumProperty(
+    physics = BoolProperty(
             name = "Physics",
-            description = "Generate physics RigidBody(s) & Shape(s)",
-            items = (('DISABLE', "No physics", "Do not create physics stuff"),
-                        ('GLOBAL', "Global", "Create a unic RigidBody + Shape at the root. Expects a 'Physics.mdl' model as TriangleMesh."),
-                        ('INDIVIDUAL', "Individual", "Create individual physics RigidBodies and Shapes")),
-            default = 'INDIVIDUAL',
-            update = update_func2)
+            description = "Add RigidBody, Shape to the nodes",
+            default = False)
 
     shapeItems = [ ('BOX', "Box", ""), ('CAPSULE', "Capsule", ""), ('CONE', "Cone", ""), \
                 ('CONVEXHULL', "ConvexHull", ""), ('CYLINDER', "Cylinder", ""), ('SPHERE', "Sphere", ""), \
                 ('STATICPLANE', "StaticPlane", ""), ('TRIANGLEMESH', "TriangleMesh", "") ]
-    shape = EnumProperty(
+    collisionShape = EnumProperty(
             name = "CollisionShape",
-            description = "CollisionShape type. Discarded if 'Collision Bounds' is checked in Physics panel.",
+            description = "Collision shape type",
             items = shapeItems,
             default = 'TRIANGLEMESH',
             update = update_func2)
@@ -1159,36 +1169,51 @@ class UrhoExportRenderPanel(bpy.types.Panel):
         if settings.prefabs:
             row = box.row()
             row.separator()
-            row.prop(settings, "individualPrefab")
+            row.prop(settings, "objectsPrefab")
             row.label("", icon='MOD_BUILD')
 
-            if not settings.merge:
+            if settings.objectsPrefab:
                 row = box.row()
                 row.separator()
-                row.prop(settings, "collectivePrefab")
-                row.label("", icon='URL')
+                row.separator()
+                row.prop(settings, "selectedObjects")
 
             row = box.row()
             row.separator()
-            row.prop(settings, "scenePrefab")
+            row.prop(settings, "collectivePrefab")
             row.label("", icon='WORLD')
 
-            if settings.scenePrefab:
+            if settings.collectivePrefab:
                 row = box.row()
                 row.separator()
                 row.separator()
-                row.prop(settings, "trasfObjects")
+                row.prop(settings, "selectedObjects")
 
             row = box.row()
+            row.separator()
+            row.prop(settings, "fullScene")
+            row.label("", icon='URL')
+
+            row = box.row()
+            row.label("   Elements to add:")
+
+            row = box.row()
+            row.separator()
+            row.separator()
+            row.prop(settings, "trasfObjects")
+
+            row = box.row()
+            row.separator()
             row.separator()
             row.prop(settings, "physics")
             row.label("", icon='PHYSICS')
 
-            row = box.row()
-            row.separator()
-            row.prop(settings, "shape")
-            row.label("", icon='GROUP')
-
+            if settings.physics:
+                row = box.row()
+                row.separator()
+                row.separator()
+                row.prop(settings, "collisionShape")
+                row.label("", icon='GROUP')
 
 #--------------------
 # Handlers
@@ -1424,23 +1449,18 @@ def ExecuteUrhoExport(context):
     elif settings.orientation == 'Z_MINUS':
         tOptions.orientation = Quaternion((1.0,0.0,0.0), radians(90.0)) * Quaternion((0.0,0.0,1.0), radians(180.0))
 
-    sOptions.shapeItems = settings.shapeItems
-    for shapeItems in settings.shapeItems:
-        if shapeItems[0] == settings.shape:
-            tOptions.shape = shapeItems[1]
-            sOptions.shape = shapeItems[1]
-            break
-
-    sOptions.mergeObjects = settings.merge
-    sOptions.doIndividualPrefab = settings.individualPrefab
+    sOptions.doObjectsPrefab = settings.objectsPrefab
     sOptions.doCollectivePrefab = settings.collectivePrefab
-    sOptions.doScenePrefab = settings.scenePrefab
-    sOptions.noPhysics = (settings.physics == 'DISABLE')
-    sOptions.individualPhysics = (settings.physics == 'INDIVIDUAL')
-    sOptions.globalPhysics = (settings.physics == 'GLOBAL')
+    sOptions.doFullScene = settings.fullScene
+    sOptions.onlySelected = settings.selectedObjects
     sOptions.trasfObjects = settings.trasfObjects
     sOptions.globalOrigin = tOptions.globalOrigin
     sOptions.orientation = tOptions.orientation
+    sOptions.physics = settings.physics
+    for shapeItem in settings.shapeItems:
+        if shapeItem[0] == settings.collisionShape:
+            sOptions.collisionShape = shapeItem[1]
+            break
 
     fOptions.useSubDirs = settings.useSubDirs
     fOptions.fileOverwrite = settings.fileOverwrite
@@ -1496,7 +1516,7 @@ def ExecuteUrhoExport(context):
         if DEBUG: print("[TIME] Export in {:.4f} sec".format(time.time() - ttt) ) #!TIME
         if DEBUG: ttt = time.time() #!TIME
 
-        uScene.Load(uExportData, tData.blenderObjectName, sOptions)
+        uScene.LoadScene(uExportData, tData.blenderObjectName, sOptions)
 
         for uModel in uExportData.models:
             filepath = GetFilepath(PathType.MODELS, uModel.name, fOptions)
@@ -1585,7 +1605,11 @@ def ExecuteUrhoExport(context):
     
     # Export scene and nodes
     if settings.prefabs:
-        UrhoExportScene(context, uScene, sOptions, fOptions)
+        if not sOptions.doObjectsPrefab and not sOptions.doCollectivePrefab and not sOptions.doFullScene:
+            log.warning("Select the type of prefabs you want to export")
+        else:
+            log.info("---- Exporting Prefabs and Scene ----")
+            UrhoExportScene(context, uScene, sOptions, fOptions)
 
     return True
 
@@ -1603,4 +1627,4 @@ def ExecuteAddon(context, silent=False):
 
     
 if __name__ == "__main__":
-	register()
+    register()
