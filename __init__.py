@@ -27,7 +27,7 @@ bl_info = {
     "description": "Urho3D export",
     "author": "reattiva",
     "version": (0, 6),
-    "blender": (2, 80, 0),
+    "blender": (2, 83, 0),
     "location": "Properties > Render > Urho export",
     "warning": "",
     "wiki_url": "",
@@ -40,13 +40,15 @@ if "decompose" in locals():
     imp.reload(export_urho)
     imp.reload(export_scene)
     imp.reload(utils)
+    imp.reload(materials)
     if DEBUG and "testing" in locals(): imp.reload(testing)
 
 from .decompose import TOptions, Scan
 from .export_urho import UrhoExportData, UrhoExportOptions, UrhoWriteModel, UrhoWriteAnimation, \
                          UrhoWriteTriggers, UrhoExport
-from .export_scene import SOptions, UrhoScene, UrhoExportScene, UrhoWriteMaterial, UrhoWriteMaterialsList
+from .export_scene import SOptions, UrhoScene, UrhoExportScene, UrhoWriteMaterialsList
 from .utils import PathType, FOptions, GetFilepath, CheckFilepath, ErrorsMem
+from .materials import write_material
 if DEBUG: from .testing import PrintUrhoData, PrintAll
 
 import os
@@ -132,7 +134,7 @@ log.addHandler(consoleHandler)
 # Addon preferences, they are visible in the Users Preferences Addons page,
 # under the Urho exporter addon row
 class UrhoAddonPreferences(bpy.types.AddonPreferences):
-    bl_idname = __name__
+    bl_idname = __package__
 
     outputPath: StringProperty(
             name = "Default export path",
@@ -223,7 +225,7 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
         self.updatingProperties = True
 
         # Save preferred output path
-        addonPrefs = context.preferences.addons[__name__].preferences
+        addonPrefs = context.preferences.addons[__package__].preferences
         if self.outputPath:
             addonPrefs.outputPath = self.outputPath
         # Skeleton implies weights    
@@ -341,7 +343,7 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
     # Revert all the export settings back to their default values
     def reset(self, context): 
         
-        addonPrefs = context.preferences.addons[__name__].preferences
+        addonPrefs = context.preferences.addons[__package__].preferences
 
         self.updatingProperties = False
 
@@ -415,7 +417,7 @@ class UrhoExportSettings(bpy.types.PropertyGroup):
     # Revert the output paths back to their default values
     def reset_paths(self, context, forced):
 
-        addonPrefs = context.preferences.addons[__name__].preferences
+        addonPrefs = context.preferences.addons[__package__].preferences
 
         if forced or (not self.outputPath and addonPrefs.outputPath):
             self.outputPath = addonPrefs.outputPath
@@ -898,7 +900,7 @@ class UrhoReportDialog(bpy.types.Operator):
     def invoke(self, context, event):
         global logMaxCount
         wm = context.window_manager
-        addonPrefs = context.preferences.addons[__name__].preferences
+        addonPrefs = context.preferences.addons[__package__].preferences
         logMaxCount = addonPrefs.maxMessagesCount
         return wm.invoke_props_dialog(self, width = addonPrefs.reportWidth)
         #return wm.invoke_popup(self, width = addonPrefs.reportWidth)
@@ -1207,12 +1209,17 @@ class UrhoExportRenderPanel(bpy.types.Panel):
 # Called after loading a new blend. Set the default path if the path edit box is empty.        
 @persistent
 def PostLoad(dummy):
-    addonPrefs = bpy.context.preferences.addons[__name__].preferences
+    addonPrefs = bpy.context.preferences.addons[__package__].preferences
     settings = bpy.context.scene.urho_exportsettings
     settings.errorsMem.Clear()
     settings.updatingProperties = False
     settings.reset_paths(bpy.context, False)
 
+    # Load materials from data.blend
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    file_path = os.path.join(dir_path, "data.blend")
+    with bpy.data.libraries.load(filepath=file_path, link=True, relative=False) as (data_from, data_to):
+        data_to.materials = data_from.materials
 
 #--------------------
 # Register Unregister
@@ -1339,8 +1346,8 @@ def ExecuteUrhoExport(context):
     global logList
 
     # Check Blender version
-    if bpy.app.version < (2, 70, 0):
-        log.error( "Blender version 2.70 or later is required" )
+    if bpy.app.version < (2, 83, 0):
+        log.error( "Blender version 2.83 or later is required" )
         return False
 
     # Clear log list
@@ -1363,7 +1370,7 @@ def ExecuteUrhoExport(context):
     sOptions = SOptions()
     
     # Addons preferences
-    addonPrefs = context.preferences.addons[__name__].preferences
+    addonPrefs = context.preferences.addons[__package__].preferences
     
     # Copy from exporter UI settings to Decompose options
     tOptions.mergeObjects = settings.merge
@@ -1529,7 +1536,7 @@ def ExecuteUrhoExport(context):
                 if image is None:
                     continue
                 # Get the texture file full path
-                srcFilename = bpy.path.abspath(image.filepath)
+                srcFilename = bpy.path.abspath(image.filepath, library=image.library)
                 # Get image filename
                 filename = os.path.basename(image.filepath)
                 if not filename:
@@ -1566,7 +1573,8 @@ def ExecuteUrhoExport(context):
                 uScene.AddFile(PathType.MATERIALS, uMaterial.name, filepath[1])
                 if CheckFilepath(filepath[0], fOptions):
                     log.info( "Creating material {:s}".format(filepath[1]) )
-                    UrhoWriteMaterial(uScene, uMaterial, filepath[0], fOptions)
+                    #UrhoWriteMaterial(uScene, uMaterial, filepath[0], fOptions)
+                    write_material(uMaterial.name, filepath[0])
                     
             if settings.materialsList:
                 for uModel in uExportData.models:
